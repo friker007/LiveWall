@@ -6,6 +6,10 @@
 
 set -e
 
+# Get the absolute directory where this script is located, and change working directory to the project root
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+
 # Color codes for premium console styling
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
