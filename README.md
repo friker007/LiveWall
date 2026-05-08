@@ -52,6 +52,24 @@ To create and open your premium, branded drag-and-drop installer disk image:
 ```
 A window will mount immediately on your screen. Simply **drag LiveWall into your Applications folder**!
 
+### 🚀 First Run & After-Installation Guide
+To ensure a smooth setup on your or your friend's Mac, follow these quick steps:
+
+1. **Move to Applications:** Always drag the `LiveWall` icon out of the DMG and into your `/Applications` folder first. (Running the app directly inside the DMG triggers macOS **App Translocation** sandboxing, which blocks video rendering).
+2. **Launch & Locate:** Double-click `LiveWall` inside `/Applications` to start it.
+   - *Note on MacBook Notch:* LiveWall runs as a background assistant with **no Dock icon** to keep your workspace clean. It places a tiny **play-in-screen** (`play.display`) icon in your **System Menu Bar (near the clock)**.
+   - *If the icon is missing:* On Macs with a hardware screen notch (like the MacBook Air M2/M3), macOS will automatically hide the LiveWall icon if your menu bar is crowded. Simply close another menu bar app or use a utility like *Hidden Bar* to reveal it!
+3. **Grant Automation Permissions:** When prompted, click **"OK"** to allow LiveWall to communicate with Spotify/Apple Music. This is required to capture and glide Now Playing song titles in real-time.
+
+### ⚠️ Troubleshooting: "App is damaged and can't be opened"
+Because LiveWall is a custom ad-hoc compiled app, downloading it on another Mac triggers macOS **Gatekeeper / Quarantine protections**, showing a scary "app is damaged" warning. 
+
+To fix this instantly on your friend's Mac, simply open their Terminal and run this command:
+```bash
+xattr -cr /Applications/LiveWall.app
+```
+*This instantly clears the quarantine flag, allowing the app to launch flawlessly with a double-click!*
+
 ### Manual Compilation
 If you prefer compiling directly in the workspace:
 ```bash
