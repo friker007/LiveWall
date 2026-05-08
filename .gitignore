@@ -1,0 +1,14 @@
+# macOS System Files
+.DS_Store
+
+# Built Application Bundle
+LiveWall.app/
+
+# Installer Artifacts (keeps the packaging script but ignores built installers)
+installer/*.dmg
+installer/staging/
+
+# Build & Swift Artifacts
+.build/
+*.o
+*.dylib
