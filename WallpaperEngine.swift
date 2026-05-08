@@ -10,11 +10,16 @@ class WallpaperEngine: ObservableObject {
     private var isBatteryPaused = false
     private var isFullscreenPaused = false
     
-    @Published var playerQueue: AVQueuePlayer?
-    @Published var playerLooper: AVPlayerLooper?
+    @Published var playerA: AVPlayer?
+    @Published var playerB: AVPlayer?
+    @Published var isPlayerAOnTop: Bool = true
+    @Published var playerAOpacity: Double = 1.0
+    @Published var playerBOpacity: Double = 1.0
     @Published var currentImage: NSImage?
     @Published var currentType: WallpaperType = .video
     
+    private var timeObserverA: Any?
+    private var timeObserverB: Any?
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -80,7 +85,8 @@ class WallpaperEngine: ObservableObject {
         WallpaperManager.shared.$volume
             .receive(on: RunLoop.main)
             .sink { [weak self] vol in
-                self?.playerQueue?.volume = vol
+                self?.playerA?.volume = vol
+                self?.playerB?.volume = vol
             }
             .store(in: &cancellables)
             
@@ -111,7 +117,16 @@ class WallpaperEngine: ObservableObject {
         let batteryPauseActive = isBatteryPaused && WallpaperManager.shared.smartPauseBattery
         let fullscreenPauseActive = isFullscreenPaused && WallpaperManager.shared.smartPauseFullscreen
         let shouldPause = isPaused || batteryPauseActive || fullscreenPauseActive
-        shouldPause ? playerQueue?.pause() : playerQueue?.play()
+        if shouldPause {
+            playerA?.pause()
+            playerB?.pause()
+        } else {
+            if isPlayerAOnTop {
+                playerA?.play()
+            } else {
+                playerB?.play()
+            }
+        }
     }
     
     private func observeScreenChanges() {
@@ -164,22 +179,99 @@ class WallpaperEngine: ObservableObject {
             url = URL(fileURLWithPath: item.path)
         }
         
-        let asset = AVURLAsset(url: url)
-        let playerItem = AVPlayerItem(asset: asset)
+        let pA = AVPlayer(url: url)
+        let pB = AVPlayer(url: url)
         
-        let queue = AVQueuePlayer()
-        queue.volume = WallpaperManager.shared.volume
-        let looper = AVPlayerLooper(player: queue, templateItem: playerItem)
+        pA.volume = WallpaperManager.shared.volume
+        pB.volume = WallpaperManager.shared.volume
+        
+        cleanupObservers()
+        
+        self.playerA = pA
+        self.playerB = pB
+        self.isPlayerAOnTop = true
+        self.playerAOpacity = 1.0
+        self.playerBOpacity = 1.0
+        
+        let interval = CMTime(seconds: 0.05, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        
+        timeObserverA = pA.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak pA, weak pB] time in
+            guard let self = self, let pA = pA, let pB = pB, self.isPlayerAOnTop else { return }
+            guard let currentItem = pA.currentItem else { return }
+            let duration = currentItem.duration.seconds
+            guard duration > 0 && !duration.isNaN else { return }
+            
+            let current = time.seconds
+            let fadeDuration = 0.6
+            let remaining = duration - current
+            
+            if remaining <= fadeDuration && remaining > 0 {
+                self.playerAOpacity = max(0.0, remaining / fadeDuration)
+                if pB.rate == 0 {
+                    pB.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                        pB.play()
+                    }
+                }
+            } else if current >= duration - 0.05 {
+                self.isPlayerAOnTop = false
+                self.playerAOpacity = 1.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak pA] in
+                    pA?.pause()
+                    pA?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            } else {
+                self.playerAOpacity = 1.0
+            }
+        }
+        
+        timeObserverB = pB.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak pA, weak pB] time in
+            guard let self = self, let pA = pA, let pB = pB, !self.isPlayerAOnTop else { return }
+            guard let currentItem = pB.currentItem else { return }
+            let duration = currentItem.duration.seconds
+            guard duration > 0 && !duration.isNaN else { return }
+            
+            let current = time.seconds
+            let fadeDuration = 0.6
+            let remaining = duration - current
+            
+            if remaining <= fadeDuration && remaining > 0 {
+                self.playerBOpacity = max(0.0, remaining / fadeDuration)
+                if pA.rate == 0 {
+                    pA.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                        pA.play()
+                    }
+                }
+            } else if current >= duration - 0.05 {
+                self.isPlayerAOnTop = true
+                self.playerBOpacity = 1.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak pB] in
+                    pB?.pause()
+                    pB?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            } else {
+                self.playerBOpacity = 1.0
+            }
+        }
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.playerQueue = queue
-            self.playerLooper = looper
             self.currentImage = nil
             self.currentType = .video
             
             self.window.makeKeyAndOrderFront(nil)
+            pA.play()
             self.evaluatePauseState()
+        }
+    }
+    
+    private func cleanupObservers() {
+        if let tokenA = timeObserverA {
+            playerA?.removeTimeObserver(tokenA)
+            timeObserverA = nil
+        }
+        if let tokenB = timeObserverB {
+            playerB?.removeTimeObserver(tokenB)
+            timeObserverB = nil
         }
     }
     
@@ -189,11 +281,14 @@ class WallpaperEngine: ObservableObject {
         let url = URL(fileURLWithPath: item.path)
         guard let image = NSImage(contentsOf: url) else { return }
         
+        cleanupObservers()
+        
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.playerQueue?.pause()
-            self.playerQueue = nil
-            self.playerLooper = nil
+            self.playerA?.pause()
+            self.playerB?.pause()
+            self.playerA = nil
+            self.playerB = nil
             
             self.currentImage = image
             self.currentType = .image
@@ -210,20 +305,26 @@ struct RootEngineView: View {
     
     var body: some View {
         ZStack {
+            Color.black.ignoresSafeArea()
+            
             // Wallpaper Layer
             if engine.currentType == .video {
-                if let queue = engine.playerQueue {
-                    VideoLayerRepresentable(queue: queue)
+                if let pB = engine.playerB {
+                    VideoLayerRepresentable(player: pB)
+                        .opacity(engine.isPlayerAOnTop ? 1.0 : engine.playerBOpacity)
+                        .zIndex(engine.isPlayerAOnTop ? 0 : 1)
                         .ignoresSafeArea()
-                } else {
-                    Color.black.ignoresSafeArea()
+                }
+                if let pA = engine.playerA {
+                    VideoLayerRepresentable(player: pA)
+                        .opacity(engine.isPlayerAOnTop ? engine.playerAOpacity : 1.0)
+                        .zIndex(engine.isPlayerAOnTop ? 1 : 0)
+                        .ignoresSafeArea()
                 }
             } else {
                 if let img = engine.currentImage {
                     ImageLayerRepresentable(image: img)
                         .ignoresSafeArea()
-                } else {
-                    Color.black.ignoresSafeArea()
                 }
             }
         }
@@ -231,19 +332,19 @@ struct RootEngineView: View {
 }
 
 struct VideoLayerRepresentable: NSViewRepresentable {
-    let queue: AVQueuePlayer
+    let player: AVPlayer
     
     func makeNSView(context: Context) -> AVPlayerView {
         let view = AVPlayerView()
-        view.player = queue
+        view.player = player
         view.controlsStyle = .none
         view.videoGravity = .resizeAspectFill
         return view
     }
     
     func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        if nsView.player != queue {
-            nsView.player = queue
+        if nsView.player != player {
+            nsView.player = player
         }
     }
 }
