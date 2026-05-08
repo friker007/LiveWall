@@ -28,12 +28,12 @@
 
 ```mermaid
 graph TD
-    A[WallpaperManager] -->|State Publishers| B[ContentView - Settings UI]
-    A -->|State Publishers| C[WallpaperEngine]
-    C -->|Renders Layer| D[Wallpaper Window - Clicks Ignore]
-    C -->|Renders HUD| E[Transparent HUD Window - Hover Interactive]
-    F[NowPlayingMonitor] -->|AppleScript Bridge| G[Spotify / Apple Music]
-    F -->|Asynchronous Fallback| H[Apple iTunes API]
+    A["WallpaperManager"] -->|State Publishers| B["ContentView (Settings UI)"]
+    A -->|State Publishers| C["WallpaperEngine"]
+    C -->|Renders Layer| D["Wallpaper Window (Clicks Ignore)"]
+    C -->|Renders HUD| E["Transparent HUD Window (Hover Interactive)"]
+    F["NowPlayingMonitor"] -->|AppleScript Bridge| G["Spotify / Apple Music"]
+    F -->|Asynchronous Fallback| H["Apple iTunes API"]
     F -->|Publishes SongInfo| E
 ```
 
