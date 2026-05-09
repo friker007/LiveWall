@@ -46,6 +46,15 @@ enum AutoCycleInterval: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum HUDPlacement: String, CaseIterable, Identifiable {
+    case bottomRight = "Bottom Right"
+    case topCenter = "Below Notch"
+    case topRight = "Top Right"
+    case bottomLeft = "Bottom Left"
+    
+    var id: String { self.rawValue }
+}
+
 // MARK: - Wallpaper Manager
 
 class WallpaperManager: ObservableObject {
@@ -79,6 +88,10 @@ class WallpaperManager: ObservableObject {
         didSet { UserDefaults.standard.set(smartPauseFullscreen, forKey: "smartPauseFullscreen") }
     }
     
+    @Published var hudPlacement: HUDPlacement {
+        didSet { UserDefaults.standard.set(hudPlacement.rawValue, forKey: "hudPlacement") }
+    }
+    
     private(set) var selectedWallpaperId: String? {
         didSet { UserDefaults.standard.set(selectedWallpaperId, forKey: "selectedWallpaperId") }
     }
@@ -99,6 +112,8 @@ class WallpaperManager: ObservableObject {
         self.autoCycleInterval = AutoCycleInterval(rawValue: intervalStr) ?? .off
         self.smartPauseBattery = UserDefaults.standard.bool(forKey: "smartPauseBattery")
         self.smartPauseFullscreen = UserDefaults.standard.bool(forKey: "smartPauseFullscreen")
+        let placementStr = UserDefaults.standard.string(forKey: "hudPlacement") ?? "Bottom Right"
+        self.hudPlacement = HUDPlacement(rawValue: placementStr) ?? .bottomRight
         
         self.selectedWallpaperId = UserDefaults.standard.string(forKey: "selectedWallpaperId")
         loadWallpapers()

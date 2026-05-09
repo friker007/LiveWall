@@ -13,12 +13,27 @@ struct ContentView: View {
     
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
-                Section("Menu") {
-                    Label("Library", systemImage: "photo.on.rectangle.angled")
-                        .tag(SidebarItem.library)
-                    Label("Settings", systemImage: "gearshape")
-                        .tag(SidebarItem.settings)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "play.display")
+                        .font(.title2)
+                        .foregroundStyle(.linearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    Text("LiveWall")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .tracking(0.5)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 8)
+                
+                List(selection: $selection) {
+                    Section("Menu") {
+                        Label("Library", systemImage: "photo.on.rectangle.angled")
+                            .tag(SidebarItem.library)
+                        Label("Settings", systemImage: "gearshape")
+                            .tag(SidebarItem.settings)
+                    }
                 }
             }
             .navigationSplitViewColumnWidth(min: 150, ideal: 200, max: 250)
@@ -440,6 +455,12 @@ struct SettingsView: View {
             Section("System & Integration") {
                 Toggle("Launch at Login", isOn: $manager.launchAtLogin)
                     .toggleStyle(.switch)
+                
+                Picker("Now Playing Position", selection: $manager.hudPlacement) {
+                    ForEach(HUDPlacement.allCases) { placement in
+                        Text(placement.rawValue).tag(placement)
+                    }
+                }
             }
             
             Section("Smart Pause") {

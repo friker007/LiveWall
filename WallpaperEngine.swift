@@ -3,6 +3,17 @@ import AVKit
 import Combine
 import SwiftUI
 
+// MARK: - Interactive Panel
+// A borderless NSWindow subclass that accepts key/mouse events even when the
+// owning application is not frontmost.  Standard borderless windows return
+// false from canBecomeKey, which causes macOS to silently drop hover and click
+// events when the user has another app focused.
+
+class InteractivePanel: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
 class WallpaperEngine: ObservableObject {
     var window: NSWindow!
     var hudWindow: NSWindow!
@@ -22,11 +33,21 @@ class WallpaperEngine: ObservableObject {
     private var timeObserverB: Any?
     private var cancellables = Set<AnyCancellable>()
     
+    // HUD mouse-tracking state
+    private var hudDesktopLevel: NSWindow.Level = .init(rawValue: 0)
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var isHUDPromoted = false
+    
+    // Active Wallpaper Item tracking
+    private var activeWallpaperItem: WallpaperItem?
+    
     init() {
         createWindow()
         bindState()
         observeScreenChanges()
         setupSystemMonitoring()
+        setupHUDMouseTracking()
     }
     
     // MARK: - Window Setup
@@ -39,33 +60,119 @@ class WallpaperEngine: ObservableObject {
         window.level = NSWindow.Level(rawValue: level)
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.ignoresMouseEvents = true
-        window.backgroundColor = .black
-        window.isOpaque = true
+        window.backgroundColor = .clear
+        window.isOpaque = false
         
         // Host the SwiftUI view natively inside the window
         window.contentView = NSHostingView(rootView: RootEngineView(engine: self))
         
-        // Dedicated, transparent interactive overlay window for Now Playing HUD
-        let hudWidth: CGFloat = 320
-        let hudHeight: CGFloat = 260
-        let hudRect = CGRect(
-            x: screen.frame.width - hudWidth - 40,
-            y: screen.frame.height - hudHeight - 40,
-            width: hudWidth,
-            height: hudHeight
-        )
-        hudWindow = NSWindow(contentRect: hudRect, styleMask: .borderless, backing: .buffered, defer: false)
-        hudWindow.level = NSWindow.Level(rawValue: level + 1)
+        // Dedicated, transparent overlay window for Now Playing HUD.
+        // Starts at desktop level with mouse events IGNORED. A global mouse
+        // monitor (setupHUDMouseTracking) detects when the cursor enters the
+        // HUD rect and temporarily promotes the window to .floating level,
+        // where macOS fully delivers hover/click events regardless of which
+        // app is focused. When the cursor leaves, it drops back down.
+        let hudRect = self.hudRect(for: screen)
+        hudWindow = InteractivePanel(contentRect: hudRect, styleMask: .borderless, backing: .buffered, defer: false)
+        hudDesktopLevel = NSWindow.Level(rawValue: level + 1)
+        hudWindow.level = hudDesktopLevel
         hudWindow.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        hudWindow.ignoresMouseEvents = false // Allow hovers/clicks!
+        hudWindow.ignoresMouseEvents = true  // managed by setupHUDMouseTracking
         hudWindow.backgroundColor = .clear
         hudWindow.isOpaque = false
         hudWindow.hasShadow = false
+        hudWindow.acceptsMouseMovedEvents = true
         
         hudWindow.contentView = NSHostingView(rootView: RootHUDView())
         
         window.makeKeyAndOrderFront(nil)
-        hudWindow.makeKeyAndOrderFront(nil)
+        hudWindow.orderFront(nil)
+    }
+    
+    // MARK: - HUD Mouse Tracking
+    //
+    // Instead of relying on macOS window-level event delivery (which fails
+    // for desktop-level windows of background apps), we use global+local
+    // mouse monitors that fire regardless of app focus. When the cursor
+    // enters the HUD frame we promote the window to .floating level and
+    // enable mouse events; when it leaves we demote it back.
+    
+    private func setupHUDMouseTracking() {
+        let handler: (NSEvent) -> Void = { [weak self] event in
+            self?.evaluateHUDHover()
+        }
+        
+        // Global monitor: fires when OUR app is NOT frontmost
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown],
+            handler: handler
+        )
+        
+        // Local monitor: fires when OUR app IS frontmost
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .leftMouseUp, .rightMouseDown]
+        ) { [weak self] event in
+            self?.evaluateHUDHover()
+            return event
+        }
+    }
+    
+    private func isHUDObscured(by hudFrame: CGRect) -> Bool {
+        if isFullscreenPaused {
+            return true
+        }
+        
+        let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        
+        for window in windowList {
+            guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
+            guard let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+            
+            if let ownerName = window[kCGWindowOwnerName as String] as? String {
+                let systemProcesses: Set<String> = [
+                    "Finder", "Dock", "LiveWall", "WindowManager",
+                    "Window Server", "SystemUIServer", "Control Center"
+                ]
+                if systemProcesses.contains(ownerName) {
+                    continue
+                }
+            }
+            
+            if rect.intersects(hudFrame) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    private func evaluateHUDHover() {
+        guard let hudWindow = hudWindow else { return }
+        let mouseLocation = NSEvent.mouseLocation  // screen coordinates
+        let hudFrame = hudWindow.frame
+        let isInside = hudFrame.contains(mouseLocation)
+        
+        // When no song is playing, the HUD is invisible — don't block clicks
+        let songPlaying = NowPlayingMonitor.shared.currentSong != nil
+        
+        // Check if another window is covering the HUD area or if in fullscreen
+        let obscured = isHUDObscured(by: hudFrame)
+        
+        if isInside && !isHUDPromoted && songPlaying && !obscured {
+            // Promote: bring the HUD to floating level so it receives all events
+            isHUDPromoted = true
+            hudWindow.level = .floating
+            hudWindow.ignoresMouseEvents = false
+            hudWindow.orderFront(nil)
+        } else if (!isInside || !songPlaying || obscured) && isHUDPromoted {
+            // Demote: drop back to desktop level, stop intercepting events
+            isHUDPromoted = false
+            hudWindow.ignoresMouseEvents = true
+            hudWindow.level = hudDesktopLevel
+        }
     }
     
     // MARK: - Reactive Bindings
@@ -94,6 +201,15 @@ class WallpaperEngine: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.evaluatePauseState()
+            }
+            .store(in: &cancellables)
+        
+        WallpaperManager.shared.$hudPlacement
+            .dropFirst()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let screen = NSScreen.main, let self = self else { return }
+                self.hudWindow.setFrame(self.hudRect(for: screen), display: true)
             }
             .store(in: &cancellables)
     }
@@ -135,22 +251,58 @@ class WallpaperEngine: ObservableObject {
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] _ in
-                guard let screen = NSScreen.main else { return }
-                self?.window.setFrame(screen.frame, display: true)
-                
-                let hudWidth: CGFloat = 320
-                let hudHeight: CGFloat = 260
-                let hudRect = CGRect(
-                    x: screen.frame.width - hudWidth - 40,
-                    y: screen.frame.height - hudHeight - 40,
-                    width: hudWidth,
-                    height: hudHeight
-                )
-                self?.hudWindow.setFrame(hudRect, display: true)
-                
-                self?.updateWallpaper()
+                guard let self = self, let screen = NSScreen.main else { return }
+                self.window.setFrame(screen.frame, display: true)
+                self.hudWindow.setFrame(self.hudRect(for: screen), display: true)
+                self.updateWallpaper()
             }
             .store(in: &cancellables)
+    }
+    
+    // MARK: - HUD Placement Helper
+    
+    private func hudRect(for screen: NSScreen) -> CGRect {
+        let hudWidth: CGFloat = 320
+        let hudHeight: CGFloat = 260
+        let margin: CGFloat = 40
+        // safeAreaInsets.top accounts for the notch on MacBook screens
+        let notchInset = screen.safeAreaInsets.top
+        // visibleFrame excludes the Dock and menu bar;
+        // comparing it to frame gives us the exact Dock insets
+        let dockBottom = screen.visibleFrame.minY - screen.frame.minY  // Dock at bottom
+        let dockLeft = screen.visibleFrame.minX - screen.frame.minX    // Dock on left side
+        let dockRight = screen.frame.maxX - screen.visibleFrame.maxX   // Dock on right side
+        
+        switch WallpaperManager.shared.hudPlacement {
+        case .bottomRight:
+            return CGRect(
+                x: screen.frame.width - hudWidth - margin - dockRight,
+                y: dockBottom + margin,
+                width: hudWidth,
+                height: hudHeight
+            )
+        case .topCenter:
+            return CGRect(
+                x: (screen.frame.width - hudWidth) / 2,
+                y: screen.frame.height - hudHeight - notchInset - 10,
+                width: hudWidth,
+                height: hudHeight
+            )
+        case .topRight:
+            return CGRect(
+                x: screen.frame.width - hudWidth - margin - dockRight,
+                y: screen.frame.height - hudHeight - notchInset - 10,
+                width: hudWidth,
+                height: hudHeight
+            )
+        case .bottomLeft:
+            return CGRect(
+                x: dockLeft + margin,
+                y: dockBottom + margin,
+                width: hudWidth,
+                height: hudHeight
+            )
+        }
     }
     
     // MARK: - Public API
@@ -161,6 +313,10 @@ class WallpaperEngine: ObservableObject {
     }
     
     func show(_ item: WallpaperItem) {
+        if activeWallpaperItem?.id == item.id && activeWallpaperItem?.path == item.path {
+            return
+        }
+        activeWallpaperItem = item
         item.type == .video ? showVideo(item) : showImage(item)
     }
     
@@ -179,6 +335,12 @@ class WallpaperEngine: ObservableObject {
             url = u
         } else {
             url = URL(fileURLWithPath: item.path)
+        }
+        
+        // Load the video thumbnail as a freeze-frame background layer to prevent black flashes
+        ThumbnailCache.shared.get(for: item) { [weak self] image in
+            guard let self = self else { return }
+            self.currentImage = image
         }
         
         let pA = AVPlayer(url: url)
@@ -257,7 +419,6 @@ class WallpaperEngine: ObservableObject {
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.currentImage = nil
             self.currentType = .video
             
             self.window.makeKeyAndOrderFront(nil)
@@ -307,9 +468,13 @@ struct RootEngineView: View {
     
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            // Background static freeze-frame thumbnail layer
+            if let img = engine.currentImage {
+                ImageLayerRepresentable(image: img)
+                    .ignoresSafeArea()
+            }
             
-            // Wallpaper Layer
+            // Interactive Video Wallpaper Layer (on top)
             if engine.currentType == .video {
                 if let pB = engine.playerB {
                     VideoLayerRepresentable(player: pB)
@@ -323,30 +488,50 @@ struct RootEngineView: View {
                         .zIndex(engine.isPlayerAOnTop ? 1 : 0)
                         .ignoresSafeArea()
                 }
-            } else {
-                if let img = engine.currentImage {
-                    ImageLayerRepresentable(image: img)
-                        .ignoresSafeArea()
-                }
             }
         }
+    }
+}
+
+// Uses raw AVPlayerLayer instead of AVPlayerView.
+// AVPlayerLayer renders frames directly into Core Animation's GPU compositor
+// and retains the last-rendered frame in its buffer even during WindowServer
+// recomposites (window open/close/minimize animations), completely eliminating
+// the black frame flash that AVPlayerView suffers from.
+
+class PlayerLayerView: NSView {
+    let player: AVPlayer
+    
+    init(player: AVPlayer) {
+        self.player = player
+        super.init(frame: .zero)
+        self.wantsLayer = true
+    }
+    
+    required init?(coder: NSCoder) { fatalError() }
+    
+    override func makeBackingLayer() -> CALayer {
+        let playerLayer = AVPlayerLayer(player: player)
+        playerLayer.videoGravity = .resizeAspectFill
+        playerLayer.backgroundColor = NSColor.clear.cgColor
+        return playerLayer
+    }
+    
+    var playerLayer: AVPlayerLayer {
+        return layer as! AVPlayerLayer
     }
 }
 
 struct VideoLayerRepresentable: NSViewRepresentable {
     let player: AVPlayer
     
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = AVPlayerView()
-        view.player = player
-        view.controlsStyle = .none
-        view.videoGravity = .resizeAspectFill
-        return view
+    func makeNSView(context: Context) -> PlayerLayerView {
+        return PlayerLayerView(player: player)
     }
     
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        if nsView.player != player {
-            nsView.player = player
+    func updateNSView(_ nsView: PlayerLayerView, context: Context) {
+        if nsView.playerLayer.player !== player {
+            nsView.playerLayer.player = player
         }
     }
 }

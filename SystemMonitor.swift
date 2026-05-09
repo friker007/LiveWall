@@ -79,6 +79,14 @@ class SystemMonitor {
         guard let screen = NSScreen.main else { return }
         let screenFrame = screen.frame
         
+        // System processes that create transient fullscreen-sized windows
+        // during app open/close/minimize animations
+        let systemProcesses: Set<String> = [
+            "Finder", "Dock", "LiveWall", "WindowManager",
+            "Window Server", "SystemUIServer", "Control Center"
+        ]
+        
+        var foundFullscreen = false
         for window in windowList {
             if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
                let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
@@ -87,7 +95,46 @@ class SystemMonitor {
                 let isFullscreen = rect.width >= screenFrame.width && rect.height >= screenFrame.height
                 if isFullscreen {
                     if let ownerName = window[kCGWindowOwnerName as String] as? String,
-                       ownerName != "Finder" && ownerName != "Dock" && ownerName != "LiveWall" {
+                       !systemProcesses.contains(ownerName) {
+                        foundFullscreen = true
+                        break
+                    }
+                }
+            }
+        }
+        
+        if foundFullscreen && lastFullscreenState != true {
+            // Debounce: confirm fullscreen is still true after a short delay
+            // to avoid false positives from transient window animations
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.confirmFullscreen()
+            }
+        } else if !foundFullscreen && lastFullscreenState != false {
+            lastFullscreenState = false
+            onFullscreenChanged?(false)
+        }
+    }
+    
+    private func confirmFullscreen() {
+        let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return }
+        guard let screen = NSScreen.main else { return }
+        let screenFrame = screen.frame
+        
+        let systemProcesses: Set<String> = [
+            "Finder", "Dock", "LiveWall", "WindowManager",
+            "Window Server", "SystemUIServer", "Control Center"
+        ]
+        
+        for window in windowList {
+            if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
+               let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+               let layer = window[kCGWindowLayer as String] as? Int, layer == 0 {
+                
+                let isFullscreen = rect.width >= screenFrame.width && rect.height >= screenFrame.height
+                if isFullscreen {
+                    if let ownerName = window[kCGWindowOwnerName as String] as? String,
+                       !systemProcesses.contains(ownerName) {
                         if lastFullscreenState != true {
                             lastFullscreenState = true
                             onFullscreenChanged?(true)
@@ -97,9 +144,6 @@ class SystemMonitor {
                 }
             }
         }
-        if lastFullscreenState != false {
-            lastFullscreenState = false
-            onFullscreenChanged?(false)
-        }
+        // Animation ended — no real fullscreen app found, don't fire
     }
 }
