@@ -13,6 +13,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         SystemMonitor.shared.start()
         NowPlayingMonitor.shared.start()
         openPreferences()
+        
+        // Silent automatic check for updates on startup
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            UpdateManager.shared.checkForUpdates { available in
+                if available {
+                    UpdateManager.shared.showUpdateAlert()
+                }
+            }
+        }
     }
     
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
@@ -64,6 +73,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         prefs.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.addItem(prefs)
         
+        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updates.image = NSImage(systemSymbolName: "arrow.clockwise.circle", accessibilityDescription: nil)
+        menu.addItem(updates)
+        
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit LiveWall", action: #selector(quitApp), keyEquivalent: "q"))
         
@@ -95,6 +108,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         WallpaperManager.shared.volume = WallpaperManager.shared.volume > 0 ? 0.0 : 1.0
     }
     @objc func togglePause() { engine.togglePause() }
+    
+    @objc func checkForUpdates() {
+        UpdateManager.shared.checkForUpdates { available in
+            if available {
+                UpdateManager.shared.showUpdateAlert()
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "Up to Date!"
+                alert.informativeText = "You are running the latest version of LiveWall (\(UpdateManager.shared.currentVersion))."
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+    }
+    
     @objc func quitApp()     { NSApplication.shared.terminate(self) }
 }
 

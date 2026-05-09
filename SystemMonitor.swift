@@ -8,6 +8,9 @@ class SystemMonitor {
     private var powerTimer: Timer?
     private var fullscreenTimer: Timer?
     
+    private var lastBatteryState: Bool?
+    private var lastFullscreenState: Bool?
+    
     var onBatteryChanged: ((Bool) -> Void)?
     var onFullscreenChanged: ((Bool) -> Void)?
     
@@ -48,19 +51,28 @@ class SystemMonitor {
                     if let isCharging = desc[kIOPSIsChargingKey] as? Bool {
                         // If internal battery is not charging, we are on battery power
                         let onBattery = !isCharging
-                        onBatteryChanged?(onBattery)
+                        if onBattery != lastBatteryState {
+                            lastBatteryState = onBattery
+                            onBatteryChanged?(onBattery)
+                        }
                         return
                     }
                 }
             }
         }
-        onBatteryChanged?(false)
+        if lastBatteryState != false {
+            lastBatteryState = false
+            onBatteryChanged?(false)
+        }
     }
     
     private func checkFullscreen() {
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            onFullscreenChanged?(false)
+            if lastFullscreenState != false {
+                lastFullscreenState = false
+                onFullscreenChanged?(false)
+            }
             return
         }
         
@@ -76,12 +88,18 @@ class SystemMonitor {
                 if isFullscreen {
                     if let ownerName = window[kCGWindowOwnerName as String] as? String,
                        ownerName != "Finder" && ownerName != "Dock" && ownerName != "LiveWall" {
-                        onFullscreenChanged?(true)
+                        if lastFullscreenState != true {
+                            lastFullscreenState = true
+                            onFullscreenChanged?(true)
+                        }
                         return
                     }
                 }
             }
         }
-        onFullscreenChanged?(false)
+        if lastFullscreenState != false {
+            lastFullscreenState = false
+            onFullscreenChanged?(false)
+        }
     }
 }

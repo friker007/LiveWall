@@ -2,6 +2,7 @@
 > Turn your desktop into a beautiful, living canvas with interactive, transparent music HUDs.
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Version-v1.1.2--alpha-red.svg?style=for-the-badge&logo=git" alt="Version: v1.1.2-alpha">
   <img src="https://img.shields.io/badge/Platform-macOS%2014.0+-brightgreen.svg?style=for-the-badge&logo=apple" alt="Platform: macOS 14.0+">
   <img src="https://img.shields.io/badge/Language-Swift%205.9-orange.svg?style=for-the-badge&logo=swift" alt="Language: Swift 5.9">
   <img src="https://img.shields.io/badge/Build-Native%20AppKit-blue.svg?style=for-the-badge" alt="Build: Native AppKit">

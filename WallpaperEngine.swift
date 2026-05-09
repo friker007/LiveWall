@@ -118,13 +118,15 @@ class WallpaperEngine: ObservableObject {
         let fullscreenPauseActive = isFullscreenPaused && WallpaperManager.shared.smartPauseFullscreen
         let shouldPause = isPaused || batteryPauseActive || fullscreenPauseActive
         if shouldPause {
-            playerA?.pause()
-            playerB?.pause()
+            if playerA?.rate != 0.0 { playerA?.pause() }
+            if playerB?.rate != 0.0 { playerB?.pause() }
         } else {
             if isPlayerAOnTop {
-                playerA?.play()
+                if playerA?.rate == 0.0 { playerA?.play() }
+                if playerB?.rate != 0.0 { playerB?.pause() }
             } else {
-                playerB?.play()
+                if playerB?.rate == 0.0 { playerB?.play() }
+                if playerA?.rate != 0.0 { playerA?.pause() }
             }
         }
     }

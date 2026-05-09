@@ -419,6 +419,7 @@ struct GalleryCard: View {
 
 struct SettingsView: View {
     @StateObject private var manager = WallpaperManager.shared
+    @ObservedObject private var updater = UpdateManager.shared
     
     var body: some View {
         Form {
@@ -449,8 +450,33 @@ struct SettingsView: View {
             }
             
             Section("About") {
-                LabeledContent("Version", value: "1.1")
+                LabeledContent("Version", value: updater.currentVersion)
                 LabeledContent("Developer", value: "LiveWall Team")
+                
+                Button(action: {
+                    updater.checkForUpdates { available in
+                        if available {
+                            updater.showUpdateAlert()
+                        } else {
+                            let alert = NSAlert()
+                            alert.messageText = "Up to Date!"
+                            alert.informativeText = "You are running the latest version of LiveWall (\(updater.currentVersion))."
+                            alert.alertStyle = .informational
+                            alert.addButton(withTitle: "OK")
+                            alert.runModal()
+                        }
+                    }
+                }) {
+                    HStack {
+                        if updater.isChecking {
+                            ProgressView().controlSize(.small)
+                            Text("Checking...")
+                        } else {
+                            Text("Check for Updates...")
+                        }
+                    }
+                }
+                .disabled(updater.isChecking)
             }
         }
         .formStyle(.grouped)
