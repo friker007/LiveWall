@@ -12,10 +12,10 @@ mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
 echo "Compiling Swift code for Apple Silicon (arm64)..."
-swiftc -target arm64-apple-macos14.0 *.swift -o "${MACOS_DIR}/${APP_NAME}_arm64"
+swiftc -target arm64-apple-macos14.0 $(find Sources -name "*.swift") -o "${MACOS_DIR}/${APP_NAME}_arm64"
 
 echo "Compiling Swift code for Intel (x86_64)..."
-swiftc -target x86_64-apple-macos14.0 *.swift -o "${MACOS_DIR}/${APP_NAME}_x86"
+swiftc -target x86_64-apple-macos14.0 $(find Sources -name "*.swift") -o "${MACOS_DIR}/${APP_NAME}_x86"
 
 echo "Merging architectures into a Universal 2 Binary..."
 lipo -create "${MACOS_DIR}/${APP_NAME}_arm64" "${MACOS_DIR}/${APP_NAME}_x86" -output "${MACOS_DIR}/${APP_NAME}"

@@ -76,7 +76,7 @@ class SystemMonitor {
             return
         }
         
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.screens.first else { return }
         let screenFrame = screen.frame
         
         // System processes that create transient fullscreen-sized windows
@@ -118,7 +118,7 @@ class SystemMonitor {
     private func confirmFullscreen() {
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return }
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.screens.first else { return }
         let screenFrame = screen.frame
         
         let systemProcesses: Set<String> = [

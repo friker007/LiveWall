@@ -84,6 +84,10 @@ class WallpaperManager: ObservableObject {
         didSet { UserDefaults.standard.set(smartPauseBattery, forKey: "smartPauseBattery") }
     }
     
+    @Published var smartPauseLowPower: Bool {
+        didSet { UserDefaults.standard.set(smartPauseLowPower, forKey: "smartPauseLowPower") }
+    }
+    
     @Published var smartPauseFullscreen: Bool {
         didSet { UserDefaults.standard.set(smartPauseFullscreen, forKey: "smartPauseFullscreen") }
     }
@@ -111,6 +115,7 @@ class WallpaperManager: ObservableObject {
         let intervalStr = UserDefaults.standard.string(forKey: "autoCycleInterval") ?? "Off"
         self.autoCycleInterval = AutoCycleInterval(rawValue: intervalStr) ?? .off
         self.smartPauseBattery = UserDefaults.standard.bool(forKey: "smartPauseBattery")
+        self.smartPauseLowPower = UserDefaults.standard.bool(forKey: "smartPauseLowPower")
         self.smartPauseFullscreen = UserDefaults.standard.bool(forKey: "smartPauseFullscreen")
         let placementStr = UserDefaults.standard.string(forKey: "hudPlacement") ?? "Bottom Right"
         self.hudPlacement = HUDPlacement(rawValue: placementStr) ?? .bottomRight

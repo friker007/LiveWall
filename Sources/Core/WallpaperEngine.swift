@@ -15,22 +15,13 @@ class InteractivePanel: NSWindow {
 }
 
 class WallpaperEngine: ObservableObject {
-    var window: NSWindow!
-    var hudWindow: NSWindow!
+    var windows: [NSWindow] = []
+    var hudWindow: NSWindow?
     @Published var isPaused = false
     private var isBatteryPaused = false
     private var isFullscreenPaused = false
+    private var isLowPowerPaused = false
     
-    @Published var playerA: AVPlayer?
-    @Published var playerB: AVPlayer?
-    @Published var isPlayerAOnTop: Bool = true
-    @Published var playerAOpacity: Double = 1.0
-    @Published var playerBOpacity: Double = 1.0
-    @Published var currentImage: NSImage?
-    @Published var currentType: WallpaperType = .video
-    
-    private var timeObserverA: Any?
-    private var timeObserverB: Any?
     private var cancellables = Set<AnyCancellable>()
     
     // HUD mouse-tracking state
@@ -40,9 +31,12 @@ class WallpaperEngine: ObservableObject {
     private var isHUDPromoted = false
     
     // Active Wallpaper Item tracking
-    private var activeWallpaperItem: WallpaperItem?
+    @Published var activeWallpaperItem: WallpaperItem?
+    
+    static var shared: WallpaperEngine?
     
     init() {
+        Self.shared = self
         createWindow()
         bindState()
         observeScreenChanges()
@@ -53,40 +47,38 @@ class WallpaperEngine: ObservableObject {
     // MARK: - Window Setup
     
     private func createWindow() {
-        guard let screen = NSScreen.main else { return }
-        let level = Int(CGWindowLevelForKey(.desktopIconWindow)) - 1
+        for win in windows {
+            win.close()
+        }
+        windows.removeAll()
         
-        window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.level = NSWindow.Level(rawValue: level)
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.ignoresMouseEvents = true
-        window.backgroundColor = .clear
-        window.isOpaque = false
+        for screen in NSScreen.screens {
+            let win = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            win.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
+            win.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+            win.ignoresMouseEvents = true
+            win.backgroundColor = .clear
+            win.isOpaque = false
+            win.contentView = NSHostingView(rootView: RootEngineView(engine: self))
+            win.makeKeyAndOrderFront(nil)
+            windows.append(win)
+        }
         
-        // Host the SwiftUI view natively inside the window
-        window.contentView = NSHostingView(rootView: RootEngineView(engine: self))
-        
-        // Dedicated, transparent overlay window for Now Playing HUD.
-        // Starts at desktop level with mouse events IGNORED. A global mouse
-        // monitor (setupHUDMouseTracking) detects when the cursor enters the
-        // HUD rect and temporarily promotes the window to .floating level,
-        // where macOS fully delivers hover/click events regardless of which
-        // app is focused. When the cursor leaves, it drops back down.
+        hudWindow?.close()
+        guard let screen = NSScreen.screens.first else { return }
         let hudRect = self.hudRect(for: screen)
-        hudWindow = InteractivePanel(contentRect: hudRect, styleMask: .borderless, backing: .buffered, defer: false)
-        hudDesktopLevel = NSWindow.Level(rawValue: level + 1)
-        hudWindow.level = hudDesktopLevel
-        hudWindow.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        hudWindow.ignoresMouseEvents = true  // managed by setupHUDMouseTracking
-        hudWindow.backgroundColor = .clear
-        hudWindow.isOpaque = false
-        hudWindow.hasShadow = false
-        hudWindow.acceptsMouseMovedEvents = true
-        
-        hudWindow.contentView = NSHostingView(rootView: RootHUDView())
-        
-        window.makeKeyAndOrderFront(nil)
-        hudWindow.orderFront(nil)
+        let hw = InteractivePanel(contentRect: hudRect, styleMask: .borderless, backing: .buffered, defer: false)
+        hudDesktopLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)))
+        hw.level = hudDesktopLevel
+        hw.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        hw.ignoresMouseEvents = true
+        hw.backgroundColor = .clear
+        hw.isOpaque = false
+        hw.hasShadow = false
+        hw.acceptsMouseMovedEvents = true
+        hw.contentView = NSHostingView(rootView: RootHUDView())
+        hw.orderFront(nil)
+        hudWindow = hw
     }
     
     // MARK: - HUD Mouse Tracking
@@ -179,8 +171,6 @@ class WallpaperEngine: ObservableObject {
     
     private func bindState() {
         WallpaperManager.shared.$currentWallpaper
-            .dropFirst()
-            .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] item in
                 guard let item = item else { return }
@@ -188,28 +178,24 @@ class WallpaperEngine: ObservableObject {
                 self?.show(item)
             }
             .store(in: &cancellables)
-        
-        WallpaperManager.shared.$volume
-            .receive(on: RunLoop.main)
-            .sink { [weak self] vol in
-                self?.playerA?.volume = vol
-                self?.playerB?.volume = vol
-            }
-            .store(in: &cancellables)
             
-        Publishers.CombineLatest(WallpaperManager.shared.$smartPauseBattery, WallpaperManager.shared.$smartPauseFullscreen)
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
-                self?.evaluatePauseState()
-            }
-            .store(in: &cancellables)
+        Publishers.CombineLatest3(
+            WallpaperManager.shared.$smartPauseBattery,
+            WallpaperManager.shared.$smartPauseFullscreen,
+            WallpaperManager.shared.$smartPauseLowPower
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _, _, _ in
+            self?.evaluatePauseState()
+        }
+        .store(in: &cancellables)
         
         WallpaperManager.shared.$hudPlacement
             .dropFirst()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                guard let screen = NSScreen.main, let self = self else { return }
-                self.hudWindow.setFrame(self.hudRect(for: screen), display: true)
+                guard let screen = NSScreen.screens.first, let self = self else { return }
+                self.hudWindow?.setFrame(self.hudRect(for: screen), display: true)
             }
             .store(in: &cancellables)
     }
@@ -227,33 +213,36 @@ class WallpaperEngine: ObservableObject {
                 self?.evaluatePauseState()
             }
         }
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(powerStateDidChange),
+            name: NSNotification.Name.NSProcessInfoPowerStateDidChange,
+            object: nil
+        )
+        self.isLowPowerPaused = ProcessInfo.processInfo.isLowPowerModeEnabled
+    }
+    
+    @objc private func powerStateDidChange() {
+        DispatchQueue.main.async { [weak self] in
+            self?.isLowPowerPaused = ProcessInfo.processInfo.isLowPowerModeEnabled
+            self?.evaluatePauseState()
+        }
     }
     
     private func evaluatePauseState() {
         let batteryPauseActive = isBatteryPaused && WallpaperManager.shared.smartPauseBattery
         let fullscreenPauseActive = isFullscreenPaused && WallpaperManager.shared.smartPauseFullscreen
-        let shouldPause = isPaused || batteryPauseActive || fullscreenPauseActive
-        if shouldPause {
-            if playerA?.rate != 0.0 { playerA?.pause() }
-            if playerB?.rate != 0.0 { playerB?.pause() }
-        } else {
-            if isPlayerAOnTop {
-                if playerA?.rate == 0.0 { playerA?.play() }
-                if playerB?.rate != 0.0 { playerB?.pause() }
-            } else {
-                if playerB?.rate == 0.0 { playerB?.play() }
-                if playerA?.rate != 0.0 { playerA?.pause() }
-            }
-        }
+        let lowPowerPauseActive = isLowPowerPaused && WallpaperManager.shared.smartPauseLowPower
+        isPaused = batteryPauseActive || fullscreenPauseActive || lowPowerPauseActive
     }
     
     private func observeScreenChanges() {
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] _ in
-                guard let self = self, let screen = NSScreen.main else { return }
-                self.window.setFrame(screen.frame, display: true)
-                self.hudWindow.setFrame(self.hudRect(for: screen), display: true)
+                guard let self = self else { return }
+                self.createWindow()
                 self.updateWallpaper()
             }
             .store(in: &cancellables)
@@ -312,152 +301,16 @@ class WallpaperEngine: ObservableObject {
         show(item)
     }
     
-    func show(_ item: WallpaperItem) {
-        if activeWallpaperItem?.id == item.id && activeWallpaperItem?.path == item.path {
+    func show(_ item: WallpaperItem, force: Bool = false) {
+        if !force && activeWallpaperItem?.id == item.id && activeWallpaperItem?.path == item.path {
             return
         }
+        self.isPaused = false
         activeWallpaperItem = item
-        item.type == .video ? showVideo(item) : showImage(item)
     }
     
     func togglePause() {
         isPaused.toggle()
-        evaluatePauseState()
-    }
-    
-    // MARK: - Video
-    
-    private func showVideo(_ item: WallpaperItem) {
-        let url: URL
-        if item.isBundled {
-            let ns = item.path as NSString
-            guard let u = Bundle.main.url(forResource: ns.deletingPathExtension, withExtension: ns.pathExtension) else { return }
-            url = u
-        } else {
-            url = URL(fileURLWithPath: item.path)
-        }
-        
-        // Load the video thumbnail as a freeze-frame background layer to prevent black flashes
-        ThumbnailCache.shared.get(for: item) { [weak self] image in
-            guard let self = self else { return }
-            self.currentImage = image
-        }
-        
-        let pA = AVPlayer(url: url)
-        let pB = AVPlayer(url: url)
-        
-        pA.volume = WallpaperManager.shared.volume
-        pB.volume = WallpaperManager.shared.volume
-        
-        cleanupObservers()
-        
-        self.playerA = pA
-        self.playerB = pB
-        self.isPlayerAOnTop = true
-        self.playerAOpacity = 1.0
-        self.playerBOpacity = 1.0
-        
-        let interval = CMTime(seconds: 0.05, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        
-        timeObserverA = pA.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak pA, weak pB] time in
-            guard let self = self, let pA = pA, let pB = pB, self.isPlayerAOnTop else { return }
-            guard let currentItem = pA.currentItem else { return }
-            let duration = currentItem.duration.seconds
-            guard duration > 0 && !duration.isNaN else { return }
-            
-            let current = time.seconds
-            let fadeDuration = 0.6
-            let remaining = duration - current
-            
-            if remaining <= fadeDuration && remaining > 0 {
-                self.playerAOpacity = max(0.0, remaining / fadeDuration)
-                if pB.rate == 0 {
-                    pB.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
-                        pB.play()
-                    }
-                }
-            } else if current >= duration - 0.05 {
-                self.isPlayerAOnTop = false
-                self.playerAOpacity = 1.0
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak pA] in
-                    pA?.pause()
-                    pA?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-                }
-            } else {
-                self.playerAOpacity = 1.0
-            }
-        }
-        
-        timeObserverB = pB.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak pA, weak pB] time in
-            guard let self = self, let pA = pA, let pB = pB, !self.isPlayerAOnTop else { return }
-            guard let currentItem = pB.currentItem else { return }
-            let duration = currentItem.duration.seconds
-            guard duration > 0 && !duration.isNaN else { return }
-            
-            let current = time.seconds
-            let fadeDuration = 0.6
-            let remaining = duration - current
-            
-            if remaining <= fadeDuration && remaining > 0 {
-                self.playerBOpacity = max(0.0, remaining / fadeDuration)
-                if pA.rate == 0 {
-                    pA.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
-                        pA.play()
-                    }
-                }
-            } else if current >= duration - 0.05 {
-                self.isPlayerAOnTop = true
-                self.playerBOpacity = 1.0
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak pB] in
-                    pB?.pause()
-                    pB?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-                }
-            } else {
-                self.playerBOpacity = 1.0
-            }
-        }
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.currentType = .video
-            
-            self.window.makeKeyAndOrderFront(nil)
-            pA.play()
-            self.evaluatePauseState()
-        }
-    }
-    
-    private func cleanupObservers() {
-        if let tokenA = timeObserverA {
-            playerA?.removeTimeObserver(tokenA)
-            timeObserverA = nil
-        }
-        if let tokenB = timeObserverB {
-            playerB?.removeTimeObserver(tokenB)
-            timeObserverB = nil
-        }
-    }
-    
-    // MARK: - Image
-    
-    private func showImage(_ item: WallpaperItem) {
-        let url = URL(fileURLWithPath: item.path)
-        guard let image = NSImage(contentsOf: url) else { return }
-        
-        cleanupObservers()
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.playerA?.pause()
-            self.playerB?.pause()
-            self.playerA = nil
-            self.playerB = nil
-            
-            self.currentImage = image
-            self.currentType = .image
-            
-            self.window.makeKeyAndOrderFront(nil)
-        }
     }
 }
 
@@ -465,90 +318,248 @@ class WallpaperEngine: ObservableObject {
 
 struct RootEngineView: View {
     @ObservedObject var engine: WallpaperEngine
+    @ObservedObject var manager = WallpaperManager.shared
     
     var body: some View {
-        ZStack {
-            // Background static freeze-frame thumbnail layer
-            if let img = engine.currentImage {
-                ImageLayerRepresentable(image: img)
-                    .ignoresSafeArea()
-            }
-            
-            // Interactive Video Wallpaper Layer (on top)
-            if engine.currentType == .video {
-                if let pB = engine.playerB {
-                    VideoLayerRepresentable(player: pB)
-                        .opacity(engine.isPlayerAOnTop ? 1.0 : engine.playerBOpacity)
-                        .zIndex(engine.isPlayerAOnTop ? 0 : 1)
-                        .ignoresSafeArea()
-                }
-                if let pA = engine.playerA {
-                    VideoLayerRepresentable(player: pA)
-                        .opacity(engine.isPlayerAOnTop ? engine.playerAOpacity : 1.0)
-                        .zIndex(engine.isPlayerAOnTop ? 1 : 0)
-                        .ignoresSafeArea()
-                }
-            }
-        }
+        WallpaperPlatformViewRepresentable(
+            item: engine.activeWallpaperItem,
+            isPaused: engine.isPaused,
+            volume: manager.volume
+        )
+        .ignoresSafeArea()
     }
 }
 
-// Uses raw AVPlayerLayer instead of AVPlayerView.
-// AVPlayerLayer renders frames directly into Core Animation's GPU compositor
-// and retains the last-rendered frame in its buffer even during WindowServer
-// recomposites (window open/close/minimize animations), completely eliminating
-// the black frame flash that AVPlayerView suffers from.
-
-class PlayerLayerView: NSView {
-    let player: AVPlayer
+struct WallpaperPlatformViewRepresentable: NSViewRepresentable {
+    let item: WallpaperItem?
+    let isPaused: Bool
+    let volume: Float
     
-    init(player: AVPlayer) {
-        self.player = player
-        super.init(frame: .zero)
-        self.wantsLayer = true
+    func makeNSView(context: Context) -> WallpaperPlatformView {
+        return WallpaperPlatformView()
     }
     
+    func updateNSView(_ nsView: WallpaperPlatformView, context: Context) {
+        nsView.update(item: item, isPaused: isPaused, volume: volume)
+    }
+}
+
+class WallpaperPlatformView: NSView {
+    private var playerA: AVPlayer?
+    private var playerB: AVPlayer?
+    private var layerA: AVPlayerLayer?
+    private var layerB: AVPlayerLayer?
+    private var imageLayer: CALayer?
+    
+    private var timeObserverA: Any?
+    private var timeObserverB: Any?
+    private var isPlayerAOnTop = true
+    
+    private var loadedItemPath: String?
+    
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        self.wantsLayer = true
+        self.layer?.backgroundColor = NSColor.black.cgColor
+    }
     required init?(coder: NSCoder) { fatalError() }
     
-    override func makeBackingLayer() -> CALayer {
-        let playerLayer = AVPlayerLayer(player: player)
-        playerLayer.videoGravity = .resizeAspectFill
-        playerLayer.backgroundColor = NSColor.clear.cgColor
-        return playerLayer
-    }
-    
-    var playerLayer: AVPlayerLayer {
-        return layer as! AVPlayerLayer
-    }
-}
-
-struct VideoLayerRepresentable: NSViewRepresentable {
-    let player: AVPlayer
-    
-    func makeNSView(context: Context) -> PlayerLayerView {
-        return PlayerLayerView(player: player)
-    }
-    
-    func updateNSView(_ nsView: PlayerLayerView, context: Context) {
-        if nsView.playerLayer.player !== player {
-            nsView.playerLayer.player = player
+    func update(item: WallpaperItem?, isPaused: Bool, volume: Float) {
+        if loadedItemPath != item?.path {
+            load(item: item)
+        }
+        
+        playerA?.volume = volume
+        playerB?.volume = volume
+        
+        if isPaused {
+            playerA?.pause()
+            playerB?.pause()
+        } else {
+            if isPlayerAOnTop {
+                if playerA?.rate == 0 { playerA?.play() }
+            } else {
+                if playerB?.rate == 0 { playerB?.play() }
+            }
         }
     }
-}
-
-struct ImageLayerRepresentable: NSViewRepresentable {
-    let image: NSImage
     
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.contentsGravity = .resizeAspectFill
-        view.layer?.contents = image
-        return view
+    private func cleanup() {
+        if let tokenA = timeObserverA { playerA?.removeTimeObserver(tokenA); timeObserverA = nil }
+        if let tokenB = timeObserverB { playerB?.removeTimeObserver(tokenB); timeObserverB = nil }
+        playerA?.pause(); playerA = nil
+        playerB?.pause(); playerB = nil
     }
     
-    func updateNSView(_ nsView: NSView, context: Context) {
-        nsView.layer?.contents = image
+    private func load(item: WallpaperItem?) {
+        loadedItemPath = item?.path
+        cleanup()
+        
+        guard let item = item else { return }
+        
+        let transitionDuration: CFTimeInterval = 0.8
+        
+        if item.type == .image {
+            let url = URL(fileURLWithPath: item.path)
+            guard let image = NSImage(contentsOf: url) else { return }
+            
+            let newImageLayer = CALayer()
+            newImageLayer.contents = image
+            newImageLayer.contentsGravity = .resizeAspectFill
+            newImageLayer.frame = self.bounds
+            newImageLayer.opacity = 0.0
+            
+            self.layer?.addSublayer(newImageLayer)
+            
+            let anim = CABasicAnimation(keyPath: "opacity")
+            anim.fromValue = 0.0
+            anim.toValue = 1.0
+            anim.duration = transitionDuration
+            newImageLayer.add(anim, forKey: "fade")
+            newImageLayer.opacity = 1.0
+            
+            let oldLayers = [layerA, layerB, imageLayer].compactMap { $0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + transitionDuration) {
+                oldLayers.forEach { $0.removeFromSuperlayer() }
+            }
+            
+            self.imageLayer = newImageLayer
+            self.layerA = nil
+            self.layerB = nil
+            
+        } else {
+            let url: URL
+            if item.isBundled {
+                let ns = item.path as NSString
+                url = Bundle.main.url(forResource: ns.deletingPathExtension, withExtension: ns.pathExtension) ?? URL(fileURLWithPath: item.path)
+            } else {
+                url = URL(fileURLWithPath: item.path)
+            }
+            
+            let pA = AVPlayer(url: url)
+            let pB = AVPlayer(url: url)
+            
+            let newLayerA = AVPlayerLayer(player: pA)
+            newLayerA.videoGravity = .resizeAspectFill
+            newLayerA.frame = self.bounds
+            newLayerA.opacity = 0.0
+            
+            let newLayerB = AVPlayerLayer(player: pB)
+            newLayerB.videoGravity = .resizeAspectFill
+            newLayerB.frame = self.bounds
+            newLayerB.opacity = 0.0
+            
+            self.layer?.addSublayer(newLayerB)
+            self.layer?.addSublayer(newLayerA) // A on top
+            
+            let anim = CABasicAnimation(keyPath: "opacity")
+            anim.fromValue = 0.0
+            anim.toValue = 1.0
+            anim.duration = transitionDuration
+            newLayerA.add(anim, forKey: "fade")
+            newLayerA.opacity = 1.0
+            
+            let oldLayers = [layerA, layerB, imageLayer].compactMap { $0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + transitionDuration) {
+                oldLayers.forEach { $0.removeFromSuperlayer() }
+                newLayerB.opacity = 1.0
+            }
+            
+            self.layerA = newLayerA
+            self.layerB = newLayerB
+            self.playerA = pA
+            self.playerB = pB
+            self.imageLayer = nil
+            
+            self.isPlayerAOnTop = true
+            
+            let interval = CMTime(seconds: 0.05, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+            
+            timeObserverA = pA.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak pA, weak pB] time in
+                guard let self = self, let pA = pA, let pB = pB, self.isPlayerAOnTop else { return }
+                guard let currentItem = pA.currentItem else { return }
+                let duration = currentItem.duration.seconds
+                guard duration > 0 && !duration.isNaN else { return }
+                
+                let current = time.seconds
+                let fadeDuration = 0.6
+                let remaining = duration - current
+                
+                if remaining <= fadeDuration && remaining > 0 {
+                    let opacity = max(0.0, remaining / fadeDuration)
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    self.layerA?.opacity = Float(opacity)
+                    CATransaction.commit()
+                    
+                    if pB.rate == 0 {
+                        pB.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                            pB.play()
+                        }
+                    }
+                } else if current >= duration - 0.05 {
+                    self.isPlayerAOnTop = false
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    self.layerA?.opacity = 1.0
+                    self.layerA?.zPosition = 0
+                    self.layerB?.zPosition = 1
+                    CATransaction.commit()
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak pA] in
+                        pA?.pause()
+                        pA?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                    }
+                }
+            }
+            
+            timeObserverB = pB.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak pA, weak pB] time in
+                guard let self = self, let pA = pA, let pB = pB, !self.isPlayerAOnTop else { return }
+                guard let currentItem = pB.currentItem else { return }
+                let duration = currentItem.duration.seconds
+                guard duration > 0 && !duration.isNaN else { return }
+                
+                let current = time.seconds
+                let fadeDuration = 0.6
+                let remaining = duration - current
+                
+                if remaining <= fadeDuration && remaining > 0 {
+                    let opacity = max(0.0, remaining / fadeDuration)
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    self.layerB?.opacity = Float(opacity)
+                    CATransaction.commit()
+                    
+                    if pA.rate == 0 {
+                        pA.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                            pA.play()
+                        }
+                    }
+                } else if current >= duration - 0.05 {
+                    self.isPlayerAOnTop = true
+                    CATransaction.begin()
+                    CATransaction.setDisableActions(true)
+                    self.layerB?.opacity = 1.0
+                    self.layerB?.zPosition = 0
+                    self.layerA?.zPosition = 1
+                    CATransaction.commit()
+                    
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak pB] in
+                        pB?.pause()
+                        pB?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                    }
+                }
+            }
+            
+            pA.play()
+        }
+    }
+    
+    override func layout() {
+        super.layout()
+        layerA?.frame = self.bounds
+        layerB?.frame = self.bounds
+        imageLayer?.frame = self.bounds
     }
 }
 

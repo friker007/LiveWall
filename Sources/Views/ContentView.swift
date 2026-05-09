@@ -35,6 +35,10 @@ struct ContentView: View {
                             .tag(SidebarItem.settings)
                     }
                 }
+                
+                Spacer()
+                
+                ResourceUsageWidget()
             }
             .navigationSplitViewColumnWidth(min: 150, ideal: 200, max: 250)
         } detail: {
@@ -466,6 +470,8 @@ struct SettingsView: View {
             Section("Smart Pause") {
                 Toggle("Pause on Battery", isOn: $manager.smartPauseBattery)
                     .toggleStyle(.switch)
+                Toggle("Pause on Low Power Mode", isOn: $manager.smartPauseLowPower)
+                    .toggleStyle(.switch)
                 Toggle("Pause on Fullscreen App", isOn: $manager.smartPauseFullscreen)
                     .toggleStyle(.switch)
             }
@@ -587,5 +593,119 @@ struct NowPlayingMiniBar: View {
                 .font(.system(size: 14))
         }
         .frame(width: 36, height: 36)
+    }
+}
+
+// MARK: - Resource Usage Widget
+
+struct ResourceUsageWidget: View {
+    @StateObject private var monitor = ResourceMonitor.shared
+    @ObservedObject private var engine = WallpaperEngine.shared ?? WallpaperEngine()
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("APP RESOURCES")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.secondary)
+                .tracking(0.8)
+            
+            HStack(spacing: 12) {
+                // CPU section
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "cpu")
+                            .font(.system(size: 10))
+                            .foregroundColor(.purple)
+                        Text("CPU")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    Text(String(format: "%.1f%%", monitor.cpuUsage))
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.purple.opacity(0.15))
+                            Capsule()
+                                .fill(Color.purple)
+                                .frame(width: geo.size.width * CGFloat(min(monitor.cpuUsage / 100.0, 1.0)))
+                        }
+                    }
+                    .frame(height: 4)
+                }
+                
+                // Memory section
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "memorychip")
+                            .font(.system(size: 10))
+                            .foregroundColor(.blue)
+                        Text("RAM")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
+                    Text(formatBytes(monitor.memoryUsageBytes))
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.blue.opacity(0.15))
+                            Capsule()
+                                .fill(Color.blue)
+                                .frame(width: geo.size.width * CGFloat(min(Double(monitor.memoryUsageBytes) / (512.0 * 1024.0 * 1024.0), 1.0))) // Scaled to 512 MB reference max
+                        }
+                    }
+                    .frame(height: 4)
+                }
+            }
+            
+            Divider()
+                .padding(.vertical, 2)
+            
+            HStack {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(engine.isPaused ? Color.orange : Color.green)
+                        .frame(width: 8, height: 8)
+                        // Simple breath animation for the indicator dot
+                        .shadow(color: (engine.isPaused ? Color.orange : Color.green).opacity(0.5), radius: 3)
+                    
+                    Text(engine.isPaused ? "Paused" : "Rendering")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.primary.opacity(0.8))
+                }
+                
+                Spacer()
+                
+                if let current = WallpaperManager.shared.currentWallpaper {
+                    Text(current.type == .video ? "Video" : "Image")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.15))
+                        .cornerRadius(4)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(NSColor.controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.secondary.opacity(0.1), lineWidth: 1)
+        )
+        .padding(12)
+    }
+    
+    private func formatBytes(_ bytes: UInt64) -> String {
+        let mb = Double(bytes) / (1024.0 * 1024.0)
+        if mb >= 1024.0 {
+            return String(format: "%.1f GB", mb / 1024.0)
+        }
+        return String(format: "%.1f MB", mb)
     }
 }

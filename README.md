@@ -2,7 +2,7 @@
 > Turn your desktop into a beautiful, living canvas with interactive, transparent music HUDs.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-v1.1.3--alpha-red.svg?style=for-the-badge&logo=git" alt="Version: v1.1.3-alpha">
+  <img src="https://img.shields.io/badge/Version-v1.2.0--alpha-red.svg?style=for-the-badge&logo=git" alt="Version: v1.2.0-alpha">
   <img src="https://img.shields.io/badge/Platform-macOS%2014.0+-brightgreen.svg?style=for-the-badge&logo=apple" alt="Platform: macOS 14.0+">
   <img src="https://img.shields.io/badge/Language-Swift%205.9-orange.svg?style=for-the-badge&logo=swift" alt="Language: Swift 5.9">
   <img src="https://img.shields.io/badge/Build-Native%20AppKit-blue.svg?style=for-the-badge" alt="Build: Native AppKit">
@@ -20,7 +20,9 @@
   - **Dual-Source Music Integration:** Pulls from **Spotify** and **Apple Music** in real-time, falling back to Apple's public iTunes Search API asynchronously with 0ms in-memory caching for streamed catalog tracks.
   - **Continuous Progress Tracker:** Uses a custom low-pass linear interpolation filter to eliminate AppleScript process latency and glide progress bars with pixel-smooth fluidity.
   - **Physics VU Spectrum Visualizer:** Real-time simulations driving spring momentum-based audio waves that react organically.
-- **Unified Control Panel:** A clean, sidebar-driven SwiftUI settings manager with per-wallpaper "Show Now Playing" toggles, global video volume slider, auto-cycle schedulers, and more.
+- **Unified Control Panel:** A clean, sidebar-driven SwiftUI settings manager with per-wallpaper "Show Now Playing" toggles, global video volume slider, auto-cycle schedulers, "Smart Pause on Low Power Mode" options, and more.
+- **True Multi-Display Coordination:** Deploys independent, hardware-accelerated rendering instances recursively across all connected monitors, dynamically scaling and adjusting as displays are plugged/unplugged.
+- **Low Power Smart Pause:** Dynamically halts video loop crossfading and player layers when macOS enters Low Power Mode to conserve maximum battery life.
 - **Premium Drag-and-Drop Installer:** Package-ready with custom DMG generation, branded disk volume icons, and instant shortcut installations.
 
 ---
@@ -81,11 +83,12 @@ open LiveWall.app
 ---
 
 ## ⚙️ Configuration & Project Settings
-All project sources are structured natively within the workspace:
-- [ContentView.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/ContentView.swift): Handles settings sidebar, wallpaper gallery grid, and the live sliding Now Playing Mini Bar.
-- [WallpaperEngine.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/WallpaperEngine.swift): Refactors AppKit windows, hosts `RootHUDView`, active layout morphs, progress bar low-pass filters, and the VU spectrum visualizer.
-- [NowPlayingMonitor.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/NowPlayingMonitor.swift): Coordinates background osascript AppleScript polling, Apple Music raw binary extraction, and the public iTunes Search API fallback.
-- [WallpaperManager.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/WallpaperManager.swift): Manages wallpaper structures, system directories, import packaging, and UserDefaults states.
+All project sources are organized recursively inside the `Sources/` directory:
+- [main.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/Sources/main.swift): Application entry point and AppKit lifecycle bootstrapping.
+- [WallpaperEngine.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/Sources/Core/WallpaperEngine.swift): Core AppKit window layer coordination and GPU-centric `AVPlayerLayer` crossfades.
+- [WallpaperManager.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/Sources/Models/WallpaperManager.swift): Local wallpaper database, cycle schedulers, and user preferences manager.
+- [SystemMonitor.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/Sources/Monitors/SystemMonitor.swift): Detects macOS fullscreen windows, battery transitions, and hardware states.
+- [ContentView.swift](file:///Users/ayushjain/Projects%20&%20shi/Personal/Live%20Wall%20for%20Macos/main/Sources/Views/ContentView.swift): The main SwiftUI settings sidebar and gallery interface.
 
 ---
 
