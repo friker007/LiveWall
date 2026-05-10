@@ -313,55 +313,69 @@ class WallpaperManager: ObservableObject {
 
 class ThumbnailCache {
     static let shared = ThumbnailCache()
-    private var cache: [String: NSImage] = [:]
+    private let cache = NSCache<NSString, NSImage>()
     private let queue = DispatchQueue(label: "com.livewall.thumbnails", qos: .userInitiated)
+    private var memorySource: DispatchSourceMemoryPressure?
+    
+    init() {
+        cache.countLimit = 50
+        
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.cache.removeAllObjects()
+        }
+        source.resume()
+        self.memorySource = source
+    }
     
     func getCached(for item: WallpaperItem) -> NSImage? {
-        if let cached = cache[item.id] {
+        if let cached = cache.object(forKey: item.id as NSString) {
             return cached
         }
         let img = generate(for: item)
-        if let i = img { cache[item.id] = i }
+        if let i = img { cache.setObject(i, forKey: item.id as NSString) }
         return img
     }
     
     func get(for item: WallpaperItem, completion: @escaping (NSImage?) -> Void) {
-        if let cached = cache[item.id] {
+        if let cached = cache.object(forKey: item.id as NSString) {
             completion(cached)
             return
         }
         queue.async { [weak self] in
             let image = self?.generate(for: item)
-            if let img = image { self?.cache[item.id] = img }
+            if let img = image { self?.cache.setObject(img, forKey: item.id as NSString) }
             DispatchQueue.main.async { completion(image) }
         }
     }
     
     private func generate(for item: WallpaperItem) -> NSImage? {
-        let url: URL
-        if item.isBundled {
-            let ns = item.path as NSString
-            guard let u = Bundle.main.url(forResource: ns.deletingPathExtension, withExtension: ns.pathExtension) else { return nil }
-            url = u
-        } else {
-            url = URL(fileURLWithPath: item.path)
-        }
-        
-        if item.type == .video {
-            let asset = AVURLAsset(url: url)
-            let gen = AVAssetImageGenerator(asset: asset)
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 320, height: 320)
-            let mid = CMTimeMultiplyByFloat64(asset.duration, multiplier: 0.5)
-            if let cg = try? gen.copyCGImage(at: mid, actualTime: nil) {
-                return NSImage(cgImage: cg, size: .zero)
+        return autoreleasepool {
+            let url: URL
+            if item.isBundled {
+                let ns = item.path as NSString
+                guard let u = Bundle.main.url(forResource: ns.deletingPathExtension, withExtension: ns.pathExtension) else { return nil }
+                url = u
+            } else {
+                url = URL(fileURLWithPath: item.path)
             }
-            if let cg = try? gen.copyCGImage(at: .zero, actualTime: nil) {
-                return NSImage(cgImage: cg, size: .zero)
+            
+            if item.type == .video {
+                let asset = AVURLAsset(url: url)
+                let gen = AVAssetImageGenerator(asset: asset)
+                gen.appliesPreferredTrackTransform = true
+                gen.maximumSize = CGSize(width: 320, height: 320)
+                let mid = CMTimeMultiplyByFloat64(asset.duration, multiplier: 0.5)
+                if let cg = try? gen.copyCGImage(at: mid, actualTime: nil) {
+                    return NSImage(cgImage: cg, size: .zero)
+                }
+                if let cg = try? gen.copyCGImage(at: .zero, actualTime: nil) {
+                    return NSImage(cgImage: cg, size: .zero)
+                }
+                return nil
+            } else {
+                return NSImage(contentsOf: url)
             }
-            return nil
-        } else {
-            return NSImage(contentsOf: url)
         }
     }
 }

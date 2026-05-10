@@ -21,6 +21,7 @@ class NowPlayingMonitor: ObservableObject {
     private let queue = DispatchQueue(label: "com.livewall.nowplaying", qos: .background)
     private var artworkCache: [String: String] = [:]
     private var pendingRequests: Set<String> = []
+    private var appleScript: NSAppleScript?
     
     private let scriptSource = """
     if application "Spotify" is running then
@@ -71,102 +72,114 @@ class NowPlayingMonitor: ObservableObject {
     return "none"
     """
     
-    init() {}
+    init() {
+        appleScript = NSAppleScript(source: scriptSource)
+    }
     
     func start() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // Poll every 3.0 seconds instead of 1.0 to significantly reduce idle CPU/energy usage
+        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.checkNowPlaying()
         }
+        
+        // Listen to distributed playback state notifications from Spotify and Music to trigger instant updates
+        let dnc = DistributedNotificationCenter.default()
+        dnc.addObserver(
+            self,
+            selector: #selector(playbackStateChanged),
+            name: NSNotification.Name("com.spotify.client.PlaybackStateChanged"),
+            object: nil
+        )
+        dnc.addObserver(
+            self,
+            selector: #selector(playbackStateChanged),
+            name: NSNotification.Name("com.apple.Music.playerInfo"),
+            object: nil
+        )
+    }
+    
+    @objc private func playbackStateChanged() {
+        checkNowPlaying()
     }
     
     private func checkNowPlaying() {
         queue.async { [weak self] in
             guard let self = self else { return }
             
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-e", self.scriptSource]
+            var resultStr: String?
+            autoreleasepool {
+                var error: NSDictionary?
+                // Execute NSAppleScript on main thread as required by Apple Event Manager
+                DispatchQueue.main.sync {
+                    if let descriptor = self.appleScript?.executeAndReturnError(&error) {
+                        resultStr = descriptor.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+            }
             
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = Pipe()
+            guard let resultStr = resultStr, resultStr != "none" else {
+                DispatchQueue.main.async {
+                    if self.currentSong != nil {
+                        self.currentSong = nil
+                    }
+                }
+                return
+            }
             
-            do {
-                try process.run()
-                process.waitUntilExit()
+            let parts = resultStr.components(separatedBy: "|||")
+            if parts.count >= 7 {
+                var song = SongInfo(
+                    app: parts[0],
+                    name: parts[1],
+                    artist: parts[2],
+                    album: parts[3],
+                    duration: Double(parts[4]) ?? 0.0,
+                    position: Double(parts[5]) ?? 0.0,
+                    artworkURL: parts[6]
+                )
                 
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let resultStr = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   resultStr != "none" {
-                    
-                    let parts = resultStr.components(separatedBy: "|||")
-                    if parts.count >= 7 {
-                        var song = SongInfo(
-                            app: parts[0],
-                            name: parts[1],
-                            artist: parts[2],
-                            album: parts[3],
-                            duration: Double(parts[4]) ?? 0.0,
-                            position: Double(parts[5]) ?? 0.0,
-                            artworkURL: parts[6]
+                let cacheKey = "\(song.artist)-\(song.name)"
+                if song.artworkURL == "none" {
+                    if let cachedURL = self.artworkCache[cacheKey] {
+                        song = SongInfo(
+                            app: song.app,
+                            name: song.name,
+                            artist: song.artist,
+                            album: song.album,
+                            duration: song.duration,
+                            position: song.position,
+                            artworkURL: cachedURL
                         )
-                        
-                        let cacheKey = "\(song.artist)-\(song.name)"
-                        if song.artworkURL == "none" {
-                            if let cachedURL = self.artworkCache[cacheKey] {
-                                song = SongInfo(
-                                    app: song.app,
-                                    name: song.name,
-                                    artist: song.artist,
-                                    album: song.album,
-                                    duration: song.duration,
-                                    position: song.position,
-                                    artworkURL: cachedURL
-                                )
-                            } else {
-                                self.fetchiTunesArtwork(for: song.name, artist: song.artist) { [weak self] url in
-                                    guard let self = self else { return }
-                                    if let url = url {
-                                        DispatchQueue.main.async {
-                                            self.artworkCache[cacheKey] = url
-                                            if var current = self.currentSong, current.name == song.name && current.artist == song.artist {
-                                                current = SongInfo(
-                                                    app: current.app,
-                                                    name: current.name,
-                                                    artist: current.artist,
-                                                    album: current.album,
-                                                    duration: current.duration,
-                                                    position: current.position,
-                                                    artworkURL: url
-                                                )
-                                                self.currentSong = current
-                                            }
-                                        }
+                    } else {
+                        self.fetchiTunesArtwork(for: song.name, artist: song.artist) { [weak self] url in
+                            guard let self = self else { return }
+                            if let url = url {
+                                DispatchQueue.main.async {
+                                    self.artworkCache[cacheKey] = url
+                                    if var current = self.currentSong, current.name == song.name && current.artist == song.artist {
+                                        current = SongInfo(
+                                            app: current.app,
+                                            name: current.name,
+                                            artist: current.artist,
+                                            album: current.album,
+                                            duration: current.duration,
+                                            position: current.position,
+                                            artworkURL: url
+                                        )
+                                        self.currentSong = current
                                     }
                                 }
                             }
                         }
-                        
-                        DispatchQueue.main.async {
-                            if self.currentSong != song {
-                                self.currentSong = song
-                            }
-                        }
-                    } else {
-                        DispatchQueue.main.async {
-                            if self.currentSong != nil {
-                                self.currentSong = nil
-                            }
-                        }
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        if self.currentSong != nil {
-                            self.currentSong = nil
-                        }
                     }
                 }
-            } catch {
+                
+                DispatchQueue.main.async {
+                    if self.currentSong != song {
+                        self.currentSong = song
+                    }
+                }
+            } else {
                 DispatchQueue.main.async {
                     if self.currentSong != nil {
                         self.currentSong = nil

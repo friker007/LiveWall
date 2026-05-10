@@ -2,7 +2,7 @@
 > Turn your desktop into a beautiful, living canvas with interactive, transparent music HUDs.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Version-v1.2.0--alpha-red.svg?style=for-the-badge&logo=git" alt="Version: v1.2.0-alpha">
+  <img src="https://img.shields.io/badge/Version-v1.2.1--alpha-red.svg?style=for-the-badge&logo=git" alt="Version: v1.2.1-alpha">
   <img src="https://img.shields.io/badge/Platform-macOS%2014.0+-brightgreen.svg?style=for-the-badge&logo=apple" alt="Platform: macOS 14.0+">
   <img src="https://img.shields.io/badge/Language-Swift%205.9-orange.svg?style=for-the-badge&logo=swift" alt="Language: Swift 5.9">
   <img src="https://img.shields.io/badge/Build-Native%20AppKit-blue.svg?style=for-the-badge" alt="Build: Native AppKit">
@@ -23,7 +23,7 @@
 - **Unified Control Panel:** A clean, sidebar-driven SwiftUI settings manager with per-wallpaper "Show Now Playing" toggles, global video volume slider, auto-cycle schedulers, "Smart Pause on Low Power Mode" options, and more.
 - **True Multi-Display Coordination:** Deploys independent, hardware-accelerated rendering instances recursively across all connected monitors, dynamically scaling and adjusting as displays are plugged/unplugged.
 - **Low Power Smart Pause:** Dynamically halts video loop crossfading and player layers when macOS enters Low Power Mode to conserve maximum battery life.
-- **Premium Drag-and-Drop Installer:** Package-ready with custom DMG generation, branded disk volume icons, and instant shortcut installations.
+- **Premium Drag-and-Drop Installer:** Package-ready with custom DMG generation, custom branded disk volume icons compiled from our gorgeous custom glassmorphism AppIcon, and instant shortcut installations.
 
 ---
 

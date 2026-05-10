@@ -21,6 +21,8 @@ class WallpaperEngine: ObservableObject {
     private var isBatteryPaused = false
     private var isFullscreenPaused = false
     private var isLowPowerPaused = false
+    private var isAsleep = false
+    private var isScreenLocked = false
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -115,14 +117,14 @@ class WallpaperEngine: ObservableObject {
         }
         
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [NSDictionary] else {
             return false
         }
         
         for window in windowList {
             guard let layer = window[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
-            guard let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
-                  let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+            guard let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: boundsDict) else { continue }
             
             if let ownerName = window[kCGWindowOwnerName as String] as? String {
                 let systemProcesses: Set<String> = [
@@ -221,6 +223,33 @@ class WallpaperEngine: ObservableObject {
             object: nil
         )
         self.isLowPowerPaused = ProcessInfo.processInfo.isLowPowerModeEnabled
+        
+        let wsCenter = NSWorkspace.shared.notificationCenter
+        wsCenter.addObserver(
+            self,
+            selector: #selector(workspaceWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        wsCenter.addObserver(
+            self,
+            selector: #selector(workspaceDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        let dnc = DistributedNotificationCenter.default()
+        dnc.addObserver(
+            self,
+            selector: #selector(screensDidLock),
+            name: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil
+        )
+        dnc.addObserver(
+            self,
+            selector: #selector(screensDidUnlock),
+            name: NSNotification.Name("com.apple.screenIsUnlocked"),
+            object: nil
+        )
     }
     
     @objc private func powerStateDidChange() {
@@ -230,11 +259,40 @@ class WallpaperEngine: ObservableObject {
         }
     }
     
+    @objc private func workspaceWillSleep() {
+        DispatchQueue.main.async { [weak self] in
+            self?.isAsleep = true
+            self?.evaluatePauseState()
+        }
+    }
+    
+    @objc private func workspaceDidWake() {
+        DispatchQueue.main.async { [weak self] in
+            self?.isAsleep = false
+            self?.evaluatePauseState()
+        }
+    }
+    
+    @objc private func screensDidLock() {
+        DispatchQueue.main.async { [weak self] in
+            self?.isScreenLocked = true
+            self?.evaluatePauseState()
+        }
+    }
+    
+    @objc private func screensDidUnlock() {
+        DispatchQueue.main.async { [weak self] in
+            self?.isScreenLocked = false
+            self?.evaluatePauseState()
+        }
+    }
+    
     private func evaluatePauseState() {
         let batteryPauseActive = isBatteryPaused && WallpaperManager.shared.smartPauseBattery
         let fullscreenPauseActive = isFullscreenPaused && WallpaperManager.shared.smartPauseFullscreen
         let lowPowerPauseActive = isLowPowerPaused && WallpaperManager.shared.smartPauseLowPower
-        isPaused = batteryPauseActive || fullscreenPauseActive || lowPowerPauseActive
+        let systemPauseActive = isAsleep || isScreenLocked
+        isPaused = batteryPauseActive || fullscreenPauseActive || lowPowerPauseActive || systemPauseActive
     }
     
     private func observeScreenChanges() {

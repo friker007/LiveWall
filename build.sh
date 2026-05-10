@@ -24,6 +24,11 @@ rm "${MACOS_DIR}/${APP_NAME}_arm64" "${MACOS_DIR}/${APP_NAME}_x86"
 echo "Copying Info.plist..."
 cp Info.plist "${CONTENTS_DIR}/"
 
+if [ -f "AppIcon.icns" ]; then
+    echo "Copying AppIcon.icns..."
+    cp AppIcon.icns "${RESOURCES_DIR}/"
+fi
+
 if [ -f "video.mp4" ]; then
     echo "Copying video.mp4..."
     cp video.mp4 "${RESOURCES_DIR}/"

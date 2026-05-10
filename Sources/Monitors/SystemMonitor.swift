@@ -68,7 +68,7 @@ class SystemMonitor {
     
     private func checkFullscreen() {
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [NSDictionary] else {
             if lastFullscreenState != false {
                 lastFullscreenState = false
                 onFullscreenChanged?(false)
@@ -88,8 +88,8 @@ class SystemMonitor {
         
         var foundFullscreen = false
         for window in windowList {
-            if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
-               let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+            if let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
+               let rect = CGRect(dictionaryRepresentation: boundsDict),
                let layer = window[kCGWindowLayer as String] as? Int, layer == 0 {
                 
                 let isFullscreen = rect.width >= screenFrame.width && rect.height >= screenFrame.height
@@ -117,7 +117,7 @@ class SystemMonitor {
     
     private func confirmFullscreen() {
         let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return }
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [NSDictionary] else { return }
         guard let screen = NSScreen.screens.first else { return }
         let screenFrame = screen.frame
         
@@ -127,8 +127,8 @@ class SystemMonitor {
         ]
         
         for window in windowList {
-            if let boundsDict = window[kCGWindowBounds as String] as? [String: Any],
-               let rect = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+            if let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
+               let rect = CGRect(dictionaryRepresentation: boundsDict),
                let layer = window[kCGWindowLayer as String] as? Int, layer == 0 {
                 
                 let isFullscreen = rect.width >= screenFrame.width && rect.height >= screenFrame.height
